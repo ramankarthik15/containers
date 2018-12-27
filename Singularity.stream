@@ -104,8 +104,6 @@ echo "Output file $RESULTS and all the logs for each workload $LOG ... are locat
 
 #Commands in the %setup section are executed on the host system outside of the container after the base OS has been installed
 
-	  export http_proxy="http://proxy-us.intel.com:911"
-	  export https_proxy="http://proxy-us.intel.com:912"
 
 	  base=`pwd`
 
@@ -135,8 +133,6 @@ echo "Output file $RESULTS and all the logs for each workload $LOG ... are locat
 #This is where the meat of your setup will live, including making directories, and installing software and libraries
 #You cannot copy files from the host to your container in this section, but you can of course download with commands like git clone and wget and curl
 
-export http_proxy="http://proxy-us.intel.com:911"		
-export https_proxy="http://proxy-us.intel.com:912"
 
 yum install -y sudo wget vi which numactl
 yum install -y hostname lscpu uptime redhat-lsb
