@@ -1,0 +1,321 @@
+BootStrap: yum
+OSVersion: 7
+MirrorURL: http://mirror.centos.org/centos-%{OSVERSION}/%{OSVERSION}/os/$basearch/
+
+Include: yum
+####################################################################################
+%help
+####################################################################################
+EXAMPLES:
+  - Available apps:
+        $ singularity apps <container-name.simg>  
+            singlenode 
+	    multinode
+            sysinfo
+            clean
+  - Single node run as:
+        $ singularity run --app singlenode <container-name.simg> $RANKS $THREADS $LATTICE 
+               Where RANKS is the number of MPI Ranks you want to run  
+               Where THREADS is the number of OpenMP Threads you want to run
+	       Where LATTICE^(4) is the lattice volume per node. Currently accepted values for LATTICE: 16 or 24 or 32
+	Example:
+        $ singularity run --app singlenode <container-name.simg> 2 20 16 
+
+  - Multinode node run as:
+****************************************
+        $ mpiexec.hydra -hostfile <$hostfile> -np <$TOTAL_RANKS> -ppn <$RANKS_PER_NODE> -genv OMP_NUM_THREADS <$THREADS> -genv KMP_AFFINITY <$AFFINITY> singularity run --app multinode <container-name.simg> -x <NX> -y <NY> -z <NZ> -t <NT> 
+               Where hostfile is the file with different hostnames 
+               Where TOTAL_RANKS is the total number of MPI ranks/processes for the multinode runs 
+	       Where RANKS_PER_NODE is the number of MPI ranks/processes per node
+	       Where THREADS is the OpenMP Threads per MPI ranks
+	       Where AFFINITY is the OpenMP affinity per node
+
+	       *******************
+	       The LATTICE Sizes:
+	       *******************
+	       The size of the four-dimensional space-time lattice is controlled by the “-x, -y, -z, -t” parameters.
+
+	       As an example, consider a problem as (x x y x z x t) = 16 x 16 x 16 x 16 running on 32 MPI ranks. 
+	       To weak scale this problem user would begin by multiplying t by 2, then z by 2, then y by 2, then x by 2 and so on such that all variables get sized accordingly in a 
+	       round robin fashion.
+
+	       This is illustrated in the table below. 
+               The original problem size is 16 x 16 x 16 x 16, to keep the elements/rank constant (weak scaling), for 64 rank count, first multiply t by 2 (16 x 16 x 16 x 32) 
+	       Similarly, for 256 ranks, multiply t by 2, z by 2, y by 2 from the original problem size to keep the same elements/rank.
+			Ranks	32	64	128	256
+			x	16	16	16	16
+			y	16	16	16	32
+			z	16	16	32	32
+			t	16	32	32	32
+	 	 	 	 	 
+		Total Elements	65536	131072	262144	524288
+		Nodes		1	2	4	8
+		Elements/Rank	2048	2048	2048	2048
+
+	       **********************
+	       Example command lines:
+	       **********************
+ 		Run with 16^(4) Lattice Volume per Node with 16 MPI ranks per node, 2 OpenMP Threads per ranks
+
+		2 Nodes:
+        	$ mpiexec.hydra -hostfile nodelist -np 32 -ppn 16 -genv OMP_NUM_THREADS 2 -genv KMP_AFFINITY 'granularity=fine,scatter,verbose' singularity run --app multinode ./milc.simg -x 16 -y 16 -z 16 -t 32
+
+		4 Nodes:
+        	$ mpiexec.hydra -hostfile nodelist -np 64 -ppn 16 -genv OMP_NUM_THREADS 2 -genv KMP_AFFINITY 'granularity=fine,scatter,verbose' singularity run --app multinode ./milc.simg -x 16 -y 16 -z 32 -t 32
+
+		16 Nodes:
+        	$ mpiexec.hydra -hostfile nodelist -np 256 -ppn 16 -genv OMP_NUM_THREADS 2 -genv KMP_AFFINITY 'granularity=fine,scatter,verbose' singularity run --app multinode ./milc.simg -x 32 -y 32 -z 32 -t 32
+ 
+****************************************
+   - Run multiple apps:
+        $ for app in sysinfo singlenode ; do singularity run --app $app <container-name.simg> ; done
+	  Note: You cannot run 'multinode' with the above command
+
+##############################################
+%apprun sysinfo
+###############
+echo "Getting system configuration"
+cd $WORKDIR
+./sysinfo.sh > $HOME/$SYSCONFIG
+
+echo "system $SYSCONFIG info file is located at $HOME"
+####################################################################################
+%environment
+############
+source /opt/intel/psxe_runtime/linux/bin/psxevars.sh
+source /opt/intel/psxe_runtime/linux/mpi/bin64/mpivars.sh
+source /opt/intel/psxe_runtime/linux/mkl/bin/mklvars.sh intel64
+
+I_MPI_SHM_LMT=shm
+I_MPI_DEBUG=5
+now=`date '+%Y_%m_%d__%H_%M'`
+hostname=`hostname`
+
+APPNAME="milc"
+LOG="${hostname}_${APPNAME}_$now.log"
+RESULTS="${hostname}_${APPNAME}_$now.results"
+SYSCONFIG="${hostname}_${APPNAME}_$now.sysconfig"
+
+WORKDIR=$SINGULARITY_ROOTFS/$APPNAME 
+
+export APPNAME LOG RESULTS SYSCONFIG WORKDIR now hostname
+export I_MPI_SHM_LMT I_MPI_DEBUG
+
+###############################################
+%apprun clean
+#############
+
+echo "deleting files $LOG $SYSCONFIG from $HOME"
+rm $HOME/$LOG
+rm $HOME/$SYSCONFIG
+rm $HOME/$RESULTS
+
+###############################################
+%apprun singlenode 
+###########
+cd $WORKDIR
+
+RANKS="$1"
+if [ -z "$RANKS" ]; then
+        RANKS=2
+        echo "You didn't specify number of ranks. So running with $RANKS ranks"
+fi
+
+THREADS="$2"
+if [ -z "$THREADS" ]; then
+        THREADS=20
+        echo "You didn't specify number of threads. So running with $THREADS threads"
+fi
+
+LATTICE="$3"
+if [ -z "$LATTICE" ]; then
+        LATTICE=24
+        echo "You didn't specify LATTICE Volume per Node. So running with 24^(4) lattice volume per node "
+fi
+
+export OMP_NUM_THREADS=$THREADS
+export KMP_AFFINITY=granularity=fine,scatter
+echo "Running with ${LATTICE}^4 Lattice points per Node"
+
+echo "Environment Variables :" |tee -a $HOME/$RESULTS
+echo "OMP_NUM_THREADS : $OMP_NUM_THREADS " |tee -a $HOME/$RESULTS
+echo "KMP_AFFINITY : $KMP_AFFINITY " | tee -a $HOME/$RESULTS
+
+echo "  mpiexec.hydra -n $RANKS ./su3_rhmd_hisq.skx < params.$LATTICE >> $HOME/$LOG"
+
+echo "${WORKDIR}/su3_rhmd_hisq.skx < params.$LATTICE" > run.sh
+chmod +x ./run.sh
+
+ mpiexec.hydra -n $RANKS ./run.sh >> $HOME/$LOG
+ ./parse_milc.sh -l qphix -m time -r $HOME/$LOG |tee -a $HOME/$RESULTS
+ ./parse_milc.sh -l qphix -m flops -r $HOME/$LOG|tee -a $HOME/$RESULTS
+
+###############################################
+%apprun multinode
+###########
+cd $WORKDIR
+usage() { echo "Usage: <./milc.simg> [-x <NX>] [-y <NY>] [-z <NZ>] [-t <NT>]" 1>&2; exit 1; }
+
+while getopts ":x:y:z:t:" o; do
+    case "${o}" in
+        x)
+            x=${OPTARG}
+            ;;
+        y)
+            y=${OPTARG}
+            ;;
+
+        z)
+            z=${OPTARG}
+            ;;
+        t)
+            t=${OPTARG}
+            ;;
+        *)
+            usage
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
+if [ -z "${x}" ] || [ -z "${y}" ] || [ -z "${z}" ] || [ -z "${t}" ]; then
+    usage
+fi
+
+echo "NX=$x, NY=$y, NZ=$z, NT=$t"
+
+cat << EOF > params.$x*$y*$z*$t
+prompt 0
+nx $x
+ny $y
+nz $z
+nt $t
+EOF
+cat params.rest >> params.$x*$y*$z*$t
+
+echo "Running with ${x}*${y}*${z}*${t} Lattice Volume"
+
+./su3_rhmd_hisq.skx < params.$x*$y*$z*$t >> $HOME/$LOG
+
+RANK=${OMPI_COMM_WORLD_RANK:=$PMI_RANK}
+if [ $(expr $RANK ) == 1  ]
+then
+./parse_milc.sh -l qphix -m time -r $HOME/$LOG |tee -a $HOME/$RESULTS
+./parse_milc.sh -l qphix -m flops -r $HOME/$LOG|tee -a $HOME/$RESULTS
+fi
+
+
+###############################################
+%setup
+######
+
+# Get the codes and any dependencies
+
+source /opt/intel/compilers_and_libraries_2018.3.222/linux/bin/compilervars.sh intel64
+#MILC CODE#
+	rm -rf milc_qcd 
+	git clone https://github.com/milc-qcd/milc_qcd.git -b intel-recipe 
+
+#MILC QPHIX CODEGEN#
+
+	pushd milc_qcd/QPhiX_MILC
+	rm -rf milc-qphix-codegen
+	git clone https://github.com/JeffersonLab/milc-qphix-codegen -b gauge_force
+	popd
+        
+#MILC QPHIX#
+	pushd milc_qcd/QPhiX_MILC
+	rm -rf milc-qphix
+	git clone https://github.com/JeffersonLab/milc-qphix -b gauge_force
+	popd
+
+#Build MILC QPHIX CODEGEN#
+  echo "Build MILC QPHIX codegen" 
+	pushd $PWD/milc_qcd/QPhiX_MILC/milc-qphix-codegen
+	make avx512 mode=mic  #specify mode=mic even when building for SKX AVX512, proper naming conventions to be done later#
+	popd
+
+#Build MILC QPHIX#
+  echo "Build MILC QPHIX" 
+	pushd $PWD/milc_qcd/QPhiX_MILC/milc-qphix
+	make -f Makefile_qphixlib mode=mic AVX512=1 SKX=1 PK_CC=mpiicc PK_CXX=mpiicpc #specify mode=mic even when building for SKX AVX512, proper naming conventions to be done later#
+	popd
+
+#Build your code 
+         
+        echo "Build MILC binaries"
+	cp milc_qcd/Makefile milc_qcd/ks_imp_rhmc/Makefile
+        cd milc_qcd/ks_imp_rhmc/ 
+	make su3_rhmd_hisq ARCH=skx COMPILER=intel MPP=true PRECISION=2 WANTQIO=false WANTQPHIX=true OMP=true CTIME="-DCGTIME -DFFTIME -DFLTIME -DGFTIME -DREMAP -DPRTIME -DIOTIME"
+        MILC_BIN="$(pwd -P)/su3_rhmd_hisq.skx"
+	MILC_INPUTS="$(pwd -P)/inputs"
+
+#Create a work directory inside the container
+  WORKDIR="$SINGULARITY_ROOTFS/milc"
+  mkdir -p $WORKDIR
+  if [ ! -x "$WORKDIR" ]; then
+     echo "failed to create milc directory..."
+     exit 1
+ fi
+
+# Copy all the binaries and anything else needed to run your binaries
+    cp $MILC_BIN $WORKDIR
+    cp -rf $MILC_INPUTS/* $WORKDIR
+    if [ "$(ls -A $WORKDIR)" ]; then
+       echo "Files are copied here $WORKDIR"
+    fi
+wget https://raw.githubusercontent.com/intel/Intel-HPC-Container/master/sysinfo.sh -P $WORKDIR
+  chmod -R 777 $WORKDIR
+
+  exit 0
+
+###############################################
+%post
+#####
+
+	    
+yum install -y sudo wget vi which
+yum install -y hostname lscpu uptime redhat-lsb
+
+#installing runtime libs for virtual machines
+rpm --import https://yum.repos.intel.com/2018/setup/RPM-GPG-KEY-intel-psxe-runtime-2018
+rpm -Uhv https://yum.repos.intel.com/2018/setup/intel-psxe-runtime-2018-reposetup-1-0.noarch.rpm
+yum install intel-psxe-runtime -y
+yum install libhfil libpsm2 -y
+yum install libnl -y
+
+	#installing gcc
+  yum install gcc -y
+	yum install bc -y 
+
+####################################################
+%help
+#####
+USAGE: 
+
+- Bind /$PWD/$APPNAME on the host to /$APPNAME in the container
+    $ export SINGULARITY_BINDPATH="$PWD/$APPNAME:APPNAME"
+
+- Run as an executable file:
+     $./<container-name.simg>
+
+- Run from inside the container:
+     $ singularity shell <container-name.simg>
+     $ cd /$WORKDIR
+     $ source /opt/intel/psxe_runtime/linux/bin/psxevars.sh
+     $ $RunCommand
+
+- Run using the exec command (http://singularity.lbl.gov/docs-exec):
+     $ singularity exec <container-name.simg> $SINGULARITY_ROOTFS/$WORKDIR/$BIN 
+     $ LocalPath/$WORKLOAD arg arg ...
+
+- List apps available inside the container (if any):
+     $ singularity apps <container-name.simg>
+    
+- Run an application ($app-name):
+     $ singularity run --app $app-name <container-name.simg>
+- Run all the apps if they don't depend on each other:
+     $ for app in $(./<container-name.simg> apps)
+     $  do
+     $      ./<container-name> run $app
+     $ done
